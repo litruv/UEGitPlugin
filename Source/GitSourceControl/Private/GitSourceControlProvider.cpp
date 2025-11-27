@@ -28,13 +28,7 @@
 #include "Misc/App.h"
 #include "Misc/EngineVersion.h"
 #include "Misc/MessageDialog.h"
-
-#include "Runtime/Launch/Resources/Version.h"
-#if ENGINE_MAJOR_VERSION == 5
 #include "UObject/ObjectSaveContext.h"
-#endif
-
-#include "UObject/Package.h"
 
 #define LOCTEXT_NAMESPACE "GitSourceControl"
 
@@ -54,9 +48,7 @@ void FGitSourceControlProvider::Init(bool bForceConnection)
 		CheckGitAvailability();
 	}
 
-#if ENGINE_MAJOR_VERSION == 5
 	UPackage::PackageSavedWithContextEvent.AddStatic(&GitSourceControlUtils::UpdateFileStagingOnSaved);
-#endif
 	
 	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
 	AssetRegistryModule.Get().OnAssetRenamed().AddStatic(&GitSourceControlUtils::UpdateStateOnAssetRename);	
@@ -127,14 +119,12 @@ void FGitSourceControlProvider::CheckRepositoryStatus()
 		if (!IsInGameThread())
 		{
 			// Wait until the module interface is valid
+			IModuleInterface* GitModule;
 			do
 			{
-				if (FModuleManager::Get().IsModuleLoaded("GitSourceControl"))
-				{
-					break;
-				}
-				FPlatformProcess::Sleep(0.01f);
-			} while (true);
+				GitModule = FModuleManager::Get().GetModule("GitSourceControl");
+				FPlatformProcess::Sleep(0.0f);
+			} while (!GitModule);
 		}
 
 		// Get user name & email (of the repository, else from the global Git config)
@@ -158,22 +148,9 @@ void FGitSourceControlProvider::CheckRepositoryStatus()
 					UE_LOG(LogSourceControl, Error, TEXT("%s"), *ErrorMessage);
 				}
 			}
-			else if (bUsingGitLfsLocking)
-			{
-				if (!GitSourceControlUtils::IsFileLFSLockable(".umap")
-					|| !GitSourceControlUtils::IsFileLFSLockable(".uasset"))
-				{
-					UE_LOG(LogSourceControl, Error, TEXT("Git LFS Locking is disabled. Files .uasset or .umap are not lockable. Make sure your .gitattributes is setting lockable attributes for .uasset or .umap at the root of the git repository."));
-					bUsingGitLfsLocking = false;
-				}
-				else
-				{
-					UE_LOG(LogSourceControl, Log, TEXT("Git LFS Locking is enabled."));
-				}
-			}
-
-			const TArray<FString> ProjectDirs = GitSourceControlUtils::GetSourceControlledAssetPaths();
-
+			const TArray<FString> ProjectDirs{FPaths::ConvertRelativePathToFull(FPaths::ProjectContentDir()),
+											  FPaths::ConvertRelativePathToFull(FPaths::ProjectConfigDir()),
+											  FPaths::ConvertRelativePathToFull(FPaths::GetProjectFilePath())};
 			TArray<FString> StatusErrorMessages;
 			if (!GitSourceControlUtils::RunUpdateStatus(PathToGitBinary, PathToRepositoryRoot, bUsingGitLfsLocking, ProjectDirs, StatusErrorMessages, States))
 			{
@@ -285,7 +262,6 @@ TSharedRef<FGitSourceControlState, ESPMode::ThreadSafe> FGitSourceControlProvide
 	}
 }
 
-#if ENGINE_MAJOR_VERSION == 5
 TSharedRef<FGitSourceControlChangelistState, ESPMode::ThreadSafe> FGitSourceControlProvider::GetStateInternal(const FGitSourceControlChangelist& InChangelist)
 {
 	TSharedRef<FGitSourceControlChangelistState, ESPMode::ThreadSafe>* State = ChangelistsStateCache.Find(InChangelist);
@@ -302,7 +278,6 @@ TSharedRef<FGitSourceControlChangelistState, ESPMode::ThreadSafe> FGitSourceCont
 		return NewState;
 	}
 }
-#endif
 
 FText FGitSourceControlProvider::GetStatusText() const
 {
@@ -462,7 +437,7 @@ ECommandResult::Type FGitSourceControlProvider::Execute( const FSourceControlOpe
 		return ECommandResult::Failed;
 	}
 
-	TArray<FString> AbsoluteFiles = SourceControlHelpers::AbsoluteFilenames(InFiles);
+	const TArray<FString>& AbsoluteFiles = SourceControlHelpers::AbsoluteFilenames(InFiles);
 
 	// Query to see if we allow this operation
 	TSharedPtr<IGitSourceControlWorker, ESPMode::ThreadSafe> Worker = CreateWorker(InOperation->GetName());
@@ -482,14 +457,12 @@ ECommandResult::Type FGitSourceControlProvider::Execute( const FSourceControlOpe
 	}
 
 	FGitSourceControlCommand* Command = new FGitSourceControlCommand(InOperation, Worker.ToSharedRef());
-	Command->UpdateRepositoryRootIfSubmodule(AbsoluteFiles);
 	Command->Files = AbsoluteFiles;
+	Command->UpdateRepositoryRootIfSubmodule(AbsoluteFiles);
 	Command->OperationCompleteDelegate = InOperationCompleteDelegate;
 
-#if ENGINE_MAJOR_VERSION == 5
 	TSharedPtr<FGitSourceControlChangelist, ESPMode::ThreadSafe> ChangelistPtr = StaticCastSharedPtr<FGitSourceControlChangelist>(InChangelist);
 	Command->Changelist = ChangelistPtr ? ChangelistPtr.ToSharedRef().Get() : FGitSourceControlChangelist();
-#endif
 	
 	// fire off operation
 	if(InConcurrency == EConcurrency::Synchronous)
@@ -879,20 +852,6 @@ void FGitSourceControlProvider::RegisterStateBranches(const TArray<FString>& Bra
 {
 	StatusBranchNamePatternsInternal = BranchNames;
 }
-
-#if ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 7
-bool FGitSourceControlProvider::GetStateBranchAtIndex(int32 BranchIndex, FString& OutBranchName) const
-{
-	auto StatusBranchNames = GetStatusBranchNames();
-
-	if (BranchIndex >= 0 && BranchIndex < StatusBranchNames.Num())
-	{
-		OutBranchName = StatusBranchNames[BranchIndex];
-		return true;
-	}
-	return false;
-}
-#endif
 
 int32 FGitSourceControlProvider::GetStateBranchIndex(const FString& StateBranchName) const
 {

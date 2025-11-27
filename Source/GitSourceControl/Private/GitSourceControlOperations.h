@@ -183,7 +183,6 @@ public:
 	TMap<const FString, FGitState> States;
 };
 
-#if ENGINE_MAJOR_VERSION == 5
 class FGitMoveToChangelistWorker : public IGitSourceControlWorker
 {
 public:
@@ -209,4 +208,3 @@ public:
 	/** Temporary states for results */
 	TMap<const FString, FGitState> States;
 };
-#endif
